@@ -707,8 +707,12 @@ class Container(BaseClient, collections.abc.Mapping, IndexersMixin):
 
         >>> a.export("everything.h5")
 
+        Export only the entries matching a search.
+
+        >>> a.search(Key("color") == "red").export("red.h5")
+
         """
-        params = {}
+        params = {**self._queries_as_params}
         if fields is not None:
             params["field"] = fields
         return export_util(

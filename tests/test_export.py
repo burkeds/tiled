@@ -2,6 +2,7 @@ import csv
 import json
 from pathlib import Path
 
+import h5py
 import numpy
 import pandas
 import pytest
@@ -11,8 +12,10 @@ from tiled.adapters.array import ArrayAdapter
 from tiled.adapters.dataframe import DataFrameAdapter
 from tiled.adapters.mapping import MapAdapter
 from tiled.adapters.xarray import DatasetAdapter
+from tiled.catalog import in_memory
 from tiled.client import Context, from_context
 from tiled.client.utils import ClientError
+from tiled.queries import Key
 from tiled.server.app import build_app
 
 data = numpy.random.random((10, 10))
@@ -190,3 +193,66 @@ def test_formats(client):
     client.formats
     client["A"].formats
     client["C"].formats
+
+
+filtered_tree = MapAdapter(
+    {
+        "a": ArrayAdapter.from_array(numpy.arange(3), metadata={"animal": "dog"}),
+        "b": ArrayAdapter.from_array(numpy.arange(3), metadata={"animal": "cat"}),
+        "c": ArrayAdapter.from_array(numpy.arange(3), metadata={"animal": "dog"}),
+    }
+)
+
+
+@pytest.fixture(scope="module")
+def filtered_map_client():
+    with Context.from_app(build_app(filtered_tree)) as context:
+        yield from_context(context)
+
+
+@pytest.fixture
+def filtered_catalog_client(tmpdir):
+    catalog = in_memory(writable_storage=str(tmpdir))
+    with Context.from_app(build_app(catalog)) as context:
+        client = from_context(context)
+        for key, value in filtered_tree.items():
+            client.write_array(value.read(), metadata=value.metadata(), key=key)
+        yield client
+
+
+@pytest.fixture(params=("filtered_map_client", "filtered_catalog_client"))
+def filtered_client(request: pytest.FixtureRequest):
+    yield request.getfixturevalue(request.param)
+
+
+def test_export_search_results(filtered_client, buffer):
+    "Exporting a filtered Node writes only the matching subset."
+    results = filtered_client.search(Key("animal") == "dog")
+    assert list(results) == ["a", "c"]
+    results.export(buffer, format="application/x-hdf5")
+    with h5py.File(buffer) as file:
+        assert set(file.keys()) == {"a", "c"}
+
+
+def test_export_search_results_with_fields(filtered_client, buffer):
+    "Explicit `fields` narrow the search results further (logical AND)."
+    results = filtered_client.search(Key("animal") == "dog")
+    results.export(buffer, fields=["a"], format="application/x-hdf5")
+    with h5py.File(buffer) as file:
+        assert set(file.keys()) == {"a"}
+
+
+def test_export_search_no_matches(filtered_client, buffer):
+    "A search matching nothing exports an empty container."
+    results = filtered_client.search(Key("animal") == "fish")
+    assert len(results) == 0
+    results.export(buffer, format="application/x-hdf5")
+    with h5py.File(buffer) as file:
+        assert set(file.keys()) == set()
+
+
+def test_export_unfiltered_still_exports_all(filtered_client, buffer):
+    "Without a search, export is unchanged: every child is written."
+    filtered_client.export(buffer, format="application/x-hdf5")
+    with h5py.File(buffer) as file:
+        assert set(file.keys()) == {"a", "b", "c"}

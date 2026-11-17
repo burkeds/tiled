@@ -1512,6 +1512,7 @@ def get_router(
         response_model=schemas.Response,
         name="full 'container' metadata and data",
     )
+    @_patch_route_signature(query_registry)
     async def get_container_full(
         request: Request,
         path: str,
@@ -1524,6 +1525,7 @@ def get_router(
         root_tree=Depends(get_root_tree),
         session_state: dict = Depends(get_session_state),
         _=Security(check_scopes, scopes=["read:data"]),
+        **filters,
     ):
         """
         Fetch the data for the given container via a GET request.
@@ -1549,6 +1551,7 @@ def get_router(
             field=field,
             format=format,
             filename=filename,
+            filters=filters,
         )
 
     @router.post(
@@ -1556,6 +1559,7 @@ def get_router(
         response_model=schemas.Response,
         name="full 'container' metadata and data",
     )
+    @_patch_route_signature(query_registry)
     async def post_container_full(
         request: Request,
         path: str,
@@ -1568,6 +1572,7 @@ def get_router(
         root_tree=Depends(get_root_tree),
         session_state: dict = Depends(get_session_state),
         _=Security(check_scopes, scopes=["read:data"]),
+        **filters,
     ):
         """
         Fetch the data for the given container via a POST request.
@@ -1593,6 +1598,7 @@ def get_router(
             field=field,
             format=format,
             filename=filename,
+            filters=filters,
         )
 
     async def container_full(
@@ -1604,10 +1610,13 @@ def get_router(
         field: list[str] | None,
         format: str | None,
         filename: str | None,
+        filters: dict | None = None,
     ):
         """
         Fetch the data for the given container.
         """
+        if filters:
+            entry = await apply_search(entry, filters, query_registry)
         try:
             with record_timing(request.state.metrics, "read"):
                 data = await ensure_awaitable(entry.read, fields=field)
